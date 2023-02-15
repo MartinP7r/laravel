@@ -8,14 +8,21 @@
 
 namespace Tmdb\Laravel;
 
-use Arr;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Support\Arr;
 use Illuminate\Support\ServiceProvider;
+use Symfony\Component\EventDispatcher\EventDispatcher;
 use Tmdb\Client;
+use Tmdb\Event\Listener\Request\AcceptJsonRequestListener;
+use Tmdb\Event\Listener\Request\ApiTokenRequestListener;
+use Tmdb\Event\Listener\Request\ContentTypeJsonRequestListener;
+use Tmdb\Event\Listener\Request\UserAgentRequestListener;
+use Tmdb\Event\Listener\RequestListener;
 use Tmdb\Laravel\Cache\DoctrineCacheBridge;
 use Tmdb\Laravel\EventDispatcher\EventDispatcherBridge;
 use Tmdb\Model\Configuration;
 use Tmdb\Repository\ConfigurationRepository;
+use Tmdb\Token\Api\ApiToken;
 
 class TmdbServiceProvider extends ServiceProvider
 {
@@ -49,8 +56,25 @@ class TmdbServiceProvider extends ServiceProvider
         );
 
         $this->app->singleton(Client::class, function (Application $app) {
-            $options = config('tmdb.options');
-            $options['api_token'] = config('tmdb.api_key');
+            $token = new ApiToken(config('tmdb.api_key'));
+            $ed = new EventDispatcher();
+
+            $options = [
+                /** @var ApiToken|BearerToken */
+                'api_token' => $token,
+                'event_dispatcher' => [
+                    'adapter' => $ed
+                ],
+                'http' => [
+                    'client' => null,
+                    'request_factory' => null,
+                    'response_factory' => null,
+                    'stream_factory' => null,
+                    'uri_factory' => null,
+                ]
+            ];
+
+            $client = new Client($options);
 
             if (!Arr::has($options, 'cache.handler')) {
                 $repository = app('cache')->store(config('tmdb.cache_store'));
@@ -66,7 +90,22 @@ class TmdbServiceProvider extends ServiceProvider
                 Arr::set($options, 'event_dispatcher', $app->make(EventDispatcherBridge::class));
             }
 
-            return new Client($options);
+            $requestListener = new RequestListener($client->getHttpClient(), $ed);
+            $ed->addListener(RequestEvent::class, $requestListener);
+
+            $apiTokenListener = new ApiTokenRequestListener($client->getToken());
+            $ed->addListener(BeforeRequestEvent::class, $apiTokenListener);
+
+            $acceptJsonListener = new AcceptJsonRequestListener();
+            $ed->addListener(BeforeRequestEvent::class, $acceptJsonListener);
+
+            $jsonContentTypeListener = new ContentTypeJsonRequestListener();
+            $ed->addListener(BeforeRequestEvent::class, $jsonContentTypeListener);
+
+            $userAgentListener = new UserAgentRequestListener();
+            $ed->addListener(BeforeRequestEvent::class, $userAgentListener);
+
+            return $client;
         });
 
         // bind the configuration (used by the image helper)
