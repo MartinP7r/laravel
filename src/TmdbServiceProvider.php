@@ -11,7 +11,6 @@ namespace Tmdb\Laravel;
 use Arr;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
-use Tmdb\ApiToken;
 use Tmdb\Client;
 use Tmdb\Laravel\Cache\DoctrineCacheBridge;
 use Tmdb\Laravel\EventDispatcher\EventDispatcherBridge;
@@ -51,6 +50,7 @@ class TmdbServiceProvider extends ServiceProvider
 
         $this->app->singleton(Client::class, function (Application $app) {
             $options = config('tmdb.options');
+            $options['api_token'] = config('tmdb.api_key');
 
             if (!Arr::has($options, 'cache.handler')) {
                 $repository = app('cache')->store(config('tmdb.cache_store'));
@@ -66,8 +66,7 @@ class TmdbServiceProvider extends ServiceProvider
                 Arr::set($options, 'event_dispatcher', $app->make(EventDispatcherBridge::class));
             }
 
-            $token = new ApiToken(config('tmdb.api_key'));
-            return new Client($token, $options);
+            return new Client($options);
         });
 
         // bind the configuration (used by the image helper)
